@@ -1,0 +1,210 @@
+import { useState } from 'react'
+import { Modal } from '../shared/Modal.jsx'
+import { Button } from '../shared/Button.jsx'
+import { DurationStepper } from './DurationStepper.jsx'
+import { StartTimeEditor } from './StartTimeEditor.jsx'
+import { PercentCompleteSlider } from './PercentCompleteSlider.jsx'
+import { CategoryPicker } from './CategoryPicker.jsx'
+import { RecurrenceEditor } from './RecurrenceEditor.jsx'
+import { ParentChildLinker } from './ParentChildLinker.jsx'
+import { RichTextEditor } from '../shared/RichTextEditor.jsx'
+import { useItem } from '../../hooks/useItem.js'
+import { useInstance } from '../../hooks/useInstance.js'
+import { useEntityStore } from '../../store/useEntityStore.js'
+import { useAppStore } from '../../store/useAppStore.js'
+import { todayStr } from '../../utils/dateUtils.js'
+
+export function ItemDetailModal({ itemId, instanceId, date, time }) {
+  const existingItem = useItem(itemId)
+  const instance = useInstance(instanceId)
+  const closeModal = useAppStore((s) => s.closeModal)
+  const createItem = useEntityStore((s) => s.createItem)
+  const updateItem = useEntityStore((s) => s.updateItem)
+  const deleteItem = useEntityStore((s) => s.deleteItem)
+  const scheduleItemOnDate = useEntityStore((s) => s.scheduleItemOnDate)
+  const unscheduleInstance = useEntityStore((s) => s.unscheduleInstance)
+  const moveInstanceTime = useEntityStore((s) => s.moveInstanceTime)
+  const moveInstanceDate = useEntityStore((s) => s.moveInstanceDate)
+  const setInstancePercentComplete = useEntityStore((s) => s.setInstancePercentComplete)
+  const setInstanceNotes = useEntityStore((s) => s.setInstanceNotes)
+
+  const isCreate = !itemId
+
+  const [title, setTitle] = useState(existingItem?.title ?? '')
+  const [durationMinutes, setDurationMinutes] = useState(
+    existingItem ? existingItem.durationMinutes : 30
+  )
+  // Notes live on the instance once an item is scheduled — each occurrence
+  // of a recurring series gets its own, same reasoning as percent complete.
+  // Only a plain (unscheduled) backlog item's notes live on the item itself.
+  const [notes, setNotes] = useState(instance ? instance.notes : (existingItem?.notes ?? ''))
+  const [categoryId, setCategoryId] = useState(existingItem?.categoryId ?? null)
+  // Progress lives on the instance once an item is scheduled — each
+  // occurrence of a recurring series tracks its own completion. Only a
+  // plain (unscheduled) backlog item's percent lives on the item itself.
+  const [percentComplete, setPercentComplete] = useState(
+    instance ? instance.percentComplete : (existingItem?.percentComplete ?? 0)
+  )
+  const [isAllDay, setIsAllDay] = useState(existingItem?.isAllDay ?? false)
+  const [scheduledDate, setScheduledDate] = useState(instance?.date ?? date ?? todayStr())
+  const [startTime, setStartTime] = useState(instance?.time ?? time ?? '09:00')
+  const [recurrence, setRecurrence] = useState(existingItem?.recurrence ?? null)
+  const [isHabit, setIsHabit] = useState(existingItem?.isHabit ?? false)
+  const [error, setError] = useState('')
+
+  const handleSave = async () => {
+    if (!title.trim()) {
+      setError('Title is required')
+      return
+    }
+    if (!scheduledDate) {
+      setError('Pick a valid date')
+      return
+    }
+    // Notes are excluded here when editing a specific instance — they live
+    // on the instance in that case (added back into the item payload only
+    // for a plain, unscheduled item below).
+    //
+    // The series' own regular time (recurrence.time) must not be derived
+    // from startTime when editing one occurrence: startTime is seeded from
+    // that INSTANCE's own time, which can differ from the series' regular
+    // time whenever this occurrence was previously moved. Overwriting the
+    // rule's time with a one-off occurrence's time would look like a
+    // recurrence change and trigger a full regeneration, wiping out any
+    // other occurrence that had been individually moved.
+    const recurrenceTime = instanceId ? (recurrence?.time ?? null) : (isAllDay ? null : startTime)
+    const payload = {
+      title: title.trim(),
+      durationMinutes,
+      categoryId,
+      isAllDay,
+      recurrence: recurrence
+        ? { ...recurrence, startDate: recurrence.startDate ?? scheduledDate, time: recurrenceTime }
+        : null,
+      isHabit: recurrence ? isHabit : false,
+    }
+
+    try {
+      if (isCreate) {
+        const saved = await createItem({ ...payload, notes, isUnscheduled: true })
+        if (recurrence) {
+          await updateItem(saved.id, { recurrence: payload.recurrence, isUnscheduled: false })
+        } else if (date) {
+          await scheduleItemOnDate(saved.id, scheduledDate, { time: startTime, isAllDay })
+        }
+      } else if (instanceId) {
+        // Instance-specific changes (which day/time this one occurrence
+        // falls on, its own progress) go first and are independent of the
+        // series — moving this occurrence must not depend on, or be undone
+        // by, the item-level save below.
+        if (scheduledDate !== instance?.date) {
+          await moveInstanceDate(instanceId, scheduledDate)
+        }
+        if (!isAllDay && startTime !== instance?.time) {
+          await moveInstanceTime(instanceId, startTime)
+        }
+        if (percentComplete !== instance?.percentComplete) {
+          await setInstancePercentComplete(instanceId, percentComplete)
+        }
+        if (notes !== instance?.notes) {
+          await setInstanceNotes(instanceId, notes)
+        }
+        await updateItem(itemId, payload)
+      } else {
+        await updateItem(itemId, { ...payload, percentComplete, notes })
+      }
+      closeModal()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong saving this item')
+    }
+  }
+
+  const handleDelete = async () => {
+    await deleteItem(itemId)
+    closeModal()
+  }
+
+  const handleUnschedule = async () => {
+    await unscheduleInstance(instanceId)
+    closeModal()
+  }
+
+  const footer = (
+    <>
+      {!isCreate && (
+        <Button variant="danger" onClick={handleDelete}>
+          Delete
+        </Button>
+      )}
+      {!isCreate && instanceId && !existingItem?.recurrence && (
+        <Button variant="subtle" onClick={handleUnschedule}>
+          Unschedule
+        </Button>
+      )}
+      <Button variant="subtle" onClick={closeModal}>
+        Cancel
+      </Button>
+      <Button variant="primary" onClick={handleSave}>
+        Save
+      </Button>
+    </>
+  )
+
+  return (
+    <Modal title={isCreate ? 'New Item' : 'Edit Item'} onClose={closeModal} footer={footer}>
+      <div className="item-detail-form">
+        <input
+          type="text"
+          className="title-input"
+          placeholder="Title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          autoFocus
+        />
+        {error && <div className="form-error">{error}</div>}
+
+        {date && (
+          <div className="scheduled-info-row">
+            <input
+              type="date"
+              className="scheduled-date-input"
+              value={scheduledDate}
+              onChange={(e) => setScheduledDate(e.target.value)}
+              aria-label="Scheduled date"
+            />
+            {!isAllDay && <StartTimeEditor time={startTime} onChange={setStartTime} />}
+          </div>
+        )}
+        {date && instanceId && existingItem?.recurrence && (
+          <div className="form-hint">Changing the date only moves this occurrence — the series keeps its regular schedule.</div>
+        )}
+
+        <label className="reminder-toggle">
+          <input type="checkbox" checked={isAllDay} onChange={(e) => setIsAllDay(e.target.checked)} />
+          All day
+        </label>
+
+        {!isAllDay && <DurationStepper durationMinutes={durationMinutes} onChange={setDurationMinutes} />}
+
+        <CategoryPicker categoryId={categoryId} onChange={setCategoryId} />
+
+        <RichTextEditor value={notes} onChange={setNotes} className="notes-editor" placeholder="Notes" />
+
+        {!isCreate && (
+          <PercentCompleteSlider percentComplete={percentComplete} onChange={setPercentComplete} />
+        )}
+
+        <RecurrenceEditor recurrence={recurrence} defaultStartDate={scheduledDate} onChange={setRecurrence} />
+
+        {recurrence && (
+          <label className="reminder-toggle">
+            <input type="checkbox" checked={isHabit} onChange={(e) => setIsHabit(e.target.checked)} />
+            Track as habit (see stats on the Stats page)
+          </label>
+        )}
+
+        {!isCreate && existingItem && <ParentChildLinker item={existingItem} />}
+      </div>
+    </Modal>
+  )
+}

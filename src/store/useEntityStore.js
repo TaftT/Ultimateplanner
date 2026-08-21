@@ -1,0 +1,403 @@
+import { create } from 'zustand'
+import * as repo from '../data/index.js'
+import { runRollover } from '../data/rollover.js'
+import { regenerateFutureInstances } from '../data/recurrence.js'
+import { todayStr, timeStrToMinutes } from '../utils/dateUtils.js'
+
+const SLEEP_CATEGORY_NAME = 'Sleep'
+const SLEEP_CATEGORY_COLOR = '#8a5fd6'
+const SLEEP_ITEM_TITLE = 'Sleep'
+
+// A ghost/worked_on finalize returns a non-recurring item to the backlog
+// (isUnscheduled: true). If the user then acts directly on one of its
+// instances again (move it, tick its percent, edit its notes), that
+// instance is definitely still scheduled — so the item's stale backlog flag
+// needs correcting, otherwise the item sits in the backlog while its own
+// instance is simultaneously live on the calendar.
+async function clearUnscheduledFlag(itemId) {
+  const item = await repo.getItem(itemId)
+  if (item?.isUnscheduled) {
+    await repo.saveItem({ id: itemId, isUnscheduled: false })
+  }
+}
+
+export const useEntityStore = create((set, get) => ({
+  categories: [],
+  items: [],
+  instancesByDate: {}, // date -> ScheduledInstance[]
+  allInstances: [], // every instance, regardless of date — backs "has a future/past instance" checks
+  journalsByDate: {}, // date -> DayJournal|null
+  initialized: false,
+
+  init: async () => {
+    if (get().initialized) return
+    await runRollover(todayStr())
+    await Promise.all([get().refreshCategories(), get().refreshItems(), get().refreshAllInstances()])
+    set({ initialized: true })
+  },
+
+  refreshCategories: async () => {
+    const categories = await repo.getAllCategories()
+    set({ categories })
+  },
+
+  refreshItems: async () => {
+    const items = await repo.getAllItems()
+    set({ items })
+  },
+
+  refreshAllInstances: async () => {
+    const allInstances = await repo.getAllInstances()
+    set({ allInstances })
+  },
+
+  loadInstancesForDate: async (date) => {
+    await runRollover(todayStr())
+    const instances = await repo.getInstancesForDate(date)
+    set((s) => ({ instancesByDate: { ...s.instancesByDate, [date]: instances } }))
+    await get().refreshAllInstances()
+    return instances
+  },
+
+  loadJournalForDate: async (date) => {
+    const journal = await repo.getJournalForDate(date)
+    set((s) => ({ journalsByDate: { ...s.journalsByDate, [date]: journal } }))
+    return journal
+  },
+
+  // ---- Items -------------------------------------------------------------
+
+  createItem: async (itemPartial) => {
+    const saved = await repo.saveItem(itemPartial)
+    await get().refreshItems()
+    return saved
+  },
+
+  updateItem: async (itemId, patch) => {
+    const before = get().items.find((i) => i.id === itemId) ?? (await repo.getItem(itemId))
+    const saved = await repo.saveItem({ id: itemId, ...patch })
+
+    // Regenerating deletes and recreates every future instance (fresh ids,
+    // percent reset to 0), which would blow away an in-flight edit to one
+    // specific occurrence (its date/time/percent, changed right after this
+    // call in the item modal). Only do that when it's actually needed: the
+    // recurrence rule changed, or duration/all-day changed (which future
+    // instances need to pick up from the template). A save that leaves the
+    // rule and duration untouched — e.g. just editing notes or completing
+    // today's occurrence — must not disturb any existing instance.
+    // Compare actual values, not key presence — the item modal always sends
+    // the full form (title, durationMinutes, isAllDay, recurrence, ...) on
+    // every save, so `'durationMinutes' in patch` is always true whether or
+    // not it actually changed.
+    const recurrenceChanged =
+      JSON.stringify(before?.recurrence ?? null) !== JSON.stringify(saved.recurrence ?? null)
+    const durationOrAllDayChanged =
+      before && (before.durationMinutes !== saved.durationMinutes || before.isAllDay !== saved.isAllDay)
+
+    if (saved.recurrence && (recurrenceChanged || durationOrAllDayChanged)) {
+      await regenerateFutureInstances(saved, todayStr())
+    } else if (before?.recurrence && recurrenceChanged && !saved.recurrence) {
+      // recurrence was just turned off — clear the remaining future instances of the old series
+      const instances = await repo.getInstancesForItem(itemId)
+      for (const inst of instances.filter((i) => !i.finalized)) {
+        await repo.deleteInstance(inst.id)
+      }
+    } else if (!saved.recurrence && durationOrAllDayChanged) {
+      const instances = await repo.getInstancesForItem(itemId)
+      for (const inst of instances.filter((i) => !i.finalized)) {
+        await repo.saveInstance({
+          ...inst,
+          durationMinutes: saved.durationMinutes,
+          isAllDay: saved.isAllDay,
+          time: saved.isAllDay ? null : inst.time,
+        })
+      }
+    }
+    await get().refreshItems()
+    await get().reloadLoadedDates()
+    await get().refreshAllInstances()
+    return saved
+  },
+
+  deleteItem: async (itemId) => {
+    await repo.deleteItem(itemId)
+    await get().refreshItems()
+    await get().reloadLoadedDates()
+    await get().refreshAllInstances()
+  },
+
+  adjustDuration: async (itemId, deltaMinutes) => {
+    const item = get().items.find((i) => i.id === itemId) ?? (await repo.getItem(itemId))
+    const current = item.durationMinutes ?? 0
+    const next = Math.max(10, current + deltaMinutes)
+    return get().updateItem(itemId, { durationMinutes: next })
+  },
+
+  // Item-level percent — the "resting" value for a backlog (unscheduled)
+  // item. Once an item is scheduled, its progress lives on the instance
+  // instead (see setInstancePercentComplete) since a recurring series needs
+  // each occurrence tracked independently.
+  setPercentComplete: async (itemId, percent) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)))
+    return get().updateItem(itemId, { percentComplete: clamped })
+  },
+
+  setInstancePercentComplete: async (instanceId, percent) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)))
+    const inst = await repo.getInstance(instanceId)
+    const patch = { percentComplete: clamped }
+
+    // A finalized instance's status is normally locked-in history — but the
+    // user can still go back and correct a past day (e.g. mark a ghost
+    // complete because it actually got done), so recompute it here rather
+    // than leaving it stuck at whatever it was originally finalized as.
+    if (inst.finalized) {
+      if (clamped >= 100) patch.status = 'completed'
+      else if (clamped > inst.startPercent) patch.status = 'worked_on'
+      else patch.status = 'ghost'
+      patch.finalPercent = clamped
+    }
+
+    const updated = await repo.saveInstance({ ...inst, ...patch })
+    await clearUnscheduledFlag(inst.itemId)
+    await get().loadInstancesForDate(inst.date)
+
+    // Keep a non-recurring item's own percent in sync too, so the backlog
+    // (where it's likely sitting after ghosting) reflects the correction.
+    if (clamped === 100 && inst.finalized) {
+      const item = await repo.getItem(inst.itemId)
+      if (item && !item.recurrence) {
+        await repo.saveItem({ id: item.id, percentComplete: clamped })
+      }
+    }
+    await get().refreshItems()
+    return updated
+  },
+
+  markInstanceComplete: async (instanceId) => {
+    return get().setInstancePercentComplete(instanceId, 100)
+  },
+
+  // Notes live on the instance once an item is scheduled, same reasoning as
+  // percent: a recurring series' occurrences need their own notes, not one
+  // shared value that edits every occurrence at once.
+  setInstanceNotes: async (instanceId, notes) => {
+    const inst = await repo.getInstance(instanceId)
+    const updated = await repo.saveInstance({ ...inst, notes })
+    await clearUnscheduledFlag(inst.itemId)
+    await get().loadInstancesForDate(inst.date)
+    await get().refreshItems()
+    return updated
+  },
+
+  // ---- Scheduling ----------------------------------------------------------
+
+  // Dragging an item onto a new date reschedules it — its existing
+  // not-yet-finalized (today/future) instance(s) are removed so it moves
+  // rather than duplicates. A finalized (past) instance is history and is
+  // left untouched; recurring series are left untouched too (dropping a
+  // recurring item just adds a one-off extra instance alongside its series).
+  scheduleItemOnDate: async (itemId, date, opts = {}) => {
+    const item = await repo.getItem(itemId)
+    const isAllDay = opts.isAllDay ?? item.isAllDay
+
+    if (!item.recurrence) {
+      const existing = await repo.getInstancesForItem(itemId)
+      for (const inst of existing.filter((i) => !i.finalized)) {
+        await repo.deleteInstance(inst.id)
+      }
+    }
+
+    const instance = await repo.saveInstance({
+      itemId,
+      date,
+      time: isAllDay ? null : (opts.time ?? '12:00'),
+      durationMinutes: item.durationMinutes,
+      isAllDay,
+      notes: item.notes,
+      percentComplete: item.percentComplete,
+    })
+    await repo.saveItem({ id: itemId, isUnscheduled: false })
+    await get().refreshItems()
+    await get().reloadLoadedDates()
+    await get().loadInstancesForDate(date)
+    return instance
+  },
+
+  moveInstanceTime: async (instanceId, newTime) => {
+    const inst = await repo.getInstance(instanceId)
+    const updated = await repo.saveInstance({ ...inst, time: newTime, isAllDay: false })
+    await clearUnscheduledFlag(inst.itemId)
+    await get().loadInstancesForDate(inst.date)
+    await get().refreshItems()
+    return updated
+  },
+
+  // Moving a task to a different day (from the item modal) restarts its
+  // tracking for that day — otherwise a stale locked-in status from wherever
+  // it used to be finalized could carry over to the new date.
+  moveInstanceDate: async (instanceId, newDate) => {
+    const inst = await repo.getInstance(instanceId)
+    if (newDate === inst.date) return inst
+    const updated = await repo.saveInstance({
+      ...inst,
+      date: newDate,
+      // Only a previously-finalized (locked-in-history) instance needs its
+      // percent reset — otherwise it shows up already "completed" on the new
+      // date before any work has happened there. A still-pending instance
+      // just being rescheduled keeps whatever in-progress percent it had.
+      percentComplete: inst.finalized ? 0 : inst.percentComplete,
+      finalized: false,
+      status: 'pending',
+      startPercent: null,
+      finalPercent: null,
+    })
+    await clearUnscheduledFlag(inst.itemId)
+    await get().reloadLoadedDates()
+    await get().loadInstancesForDate(newDate)
+    await get().refreshItems()
+    return updated
+  },
+
+  unscheduleInstance: async (instanceId) => {
+    const inst = await repo.getInstance(instanceId)
+    await repo.deleteInstance(instanceId)
+    await repo.saveItem({ id: inst.itemId, isUnscheduled: true })
+    await get().refreshItems()
+    await get().loadInstancesForDate(inst.date)
+  },
+
+  reloadLoadedDates: async () => {
+    const dates = Object.keys(get().instancesByDate)
+    await Promise.all(dates.map((d) => get().loadInstancesForDate(d)))
+  },
+
+  // ---- Parent/child links (informational only) ----------------------------
+
+  linkParentChild: async (parentId, childId) => {
+    if (parentId === childId) return
+    const parent = await repo.getItem(parentId)
+    const child = await repo.getItem(childId)
+    if (!parent.childIds.includes(childId)) {
+      await repo.saveItem({ id: parentId, childIds: [...parent.childIds, childId] })
+    }
+    if (!child.parentIds.includes(parentId)) {
+      await repo.saveItem({ id: childId, parentIds: [...child.parentIds, parentId] })
+    }
+    await get().refreshItems()
+  },
+
+  unlinkParentChild: async (parentId, childId) => {
+    const parent = await repo.getItem(parentId)
+    const child = await repo.getItem(childId)
+    await repo.saveItem({ id: parentId, childIds: parent.childIds.filter((x) => x !== childId) })
+    await repo.saveItem({ id: childId, parentIds: child.parentIds.filter((x) => x !== parentId) })
+    await get().refreshItems()
+  },
+
+  // ---- Backlog ordering ----------------------------------------------------
+
+  /**
+   * Moves draggedId to sit just before/after targetId in the shared backlog
+   * order, then renumbers everyone sequentially. Renumbering the whole list
+   * (rather than fractional-indexing between neighbors) is simplest and
+   * plenty cheap for a personal list of this size.
+   */
+  reorderItem: async (draggedId, targetId, position) => {
+    if (draggedId === targetId) return
+    const ordered = get().items.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    const dragged = ordered.find((i) => i.id === draggedId)
+    if (!dragged) return
+    const rest = ordered.filter((i) => i.id !== draggedId)
+    const targetIndex = rest.findIndex((i) => i.id === targetId)
+    if (targetIndex === -1) return
+    const insertIndex = position === 'after' ? targetIndex + 1 : targetIndex
+    rest.splice(insertIndex, 0, dragged)
+
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i].order !== i) {
+        await repo.saveItem({ id: rest[i].id, order: i })
+      }
+    }
+    await get().refreshItems()
+  },
+
+  // ---- Categories ------------------------------------------------------
+
+  saveCategory: async (categoryPartial) => {
+    const saved = await repo.saveCategory(categoryPartial)
+    await get().refreshCategories()
+    return saved
+  },
+
+  deleteCategory: async (categoryId) => {
+    await repo.deleteCategory(categoryId)
+    await get().refreshCategories()
+    await get().refreshItems()
+  },
+
+  // ---- Sleep -------------------------------------------------------------
+
+  /**
+   * Sets tonight's sleep as a normal scheduled item (bedtime + computed
+   * duration) so it renders on the day grid like anything else — including
+   * running past midnight via the overnight-continuation rendering. Reuses
+   * a single "Sleep" item/category across calls rather than creating a new
+   * one each time.
+   * @param {{date: string, bedtime: string, wakeTime: string, recurring: boolean}} args
+   */
+  setSleepSchedule: async ({ date, bedtime, wakeTime, recurring }) => {
+    const bedMinutes = timeStrToMinutes(bedtime)
+    const wakeMinutes = timeStrToMinutes(wakeTime)
+    const durationMinutes =
+      wakeMinutes <= bedMinutes ? 1440 - bedMinutes + wakeMinutes : wakeMinutes - bedMinutes
+
+    let sleepCategory = get().categories.find((c) => c.name === SLEEP_CATEGORY_NAME)
+    if (!sleepCategory) {
+      sleepCategory = await repo.saveCategory({ name: SLEEP_CATEGORY_NAME, color: SLEEP_CATEGORY_COLOR })
+      await get().refreshCategories()
+    }
+
+    let sleepItem = get().items.find((i) => i.title === SLEEP_ITEM_TITLE)
+    if (!sleepItem) {
+      sleepItem = await repo.saveItem({
+        title: SLEEP_ITEM_TITLE,
+        categoryId: sleepCategory.id,
+        durationMinutes,
+        isUnscheduled: true,
+      })
+      await get().refreshItems()
+    }
+
+    if (recurring) {
+      await get().updateItem(sleepItem.id, {
+        durationMinutes,
+        categoryId: sleepCategory.id,
+        recurrence: {
+          freq: 'daily',
+          interval: 1,
+          byWeekday: null,
+          startDate: date,
+          endDate: null,
+          time: bedtime,
+        },
+        isUnscheduled: false,
+      })
+    } else {
+      await get().updateItem(sleepItem.id, { durationMinutes, categoryId: sleepCategory.id, recurrence: null })
+      await get().scheduleItemOnDate(sleepItem.id, date, { time: bedtime })
+    }
+  },
+
+  // ---- Journal -----------------------------------------------------------
+
+  saveJournalForDate: async (date, patch) => {
+    const journal = await repo.saveJournal({ date, ...patch })
+    set((s) => ({ journalsByDate: { ...s.journalsByDate, [date]: journal } }))
+    return journal
+  },
+
+  // ---- Search --------------------------------------------------------------
+
+  search: async (query) => repo.searchItems(query),
+}))
