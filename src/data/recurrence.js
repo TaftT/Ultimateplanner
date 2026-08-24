@@ -96,6 +96,7 @@ export async function ensureInstancesGenerated(item, today, horizonDays = GENERA
       finalized: false,
       finalPercent: null,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     }))
 
   if (toCreate.length > 0) {

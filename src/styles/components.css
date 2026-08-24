@@ -135,6 +135,68 @@
   background: var(--color-bg-alt);
 }
 
+.account-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--color-border);
+}
+
+.account-email {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-locked {
+  color: var(--color-danger);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-form input {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.auth-mode-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.instance-sync-badge {
+  font-size: 0.7em;
+  margin-left: 4px;
+  opacity: 0.85;
+}
+
 .icon-button-journal-has-entry {
   position: relative;
 }
@@ -1164,6 +1226,63 @@
 
 .toast-finish {
   border-color: var(--color-danger);
+}
+
+/* Home page */
+
+.home-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.home-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 16px;
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.home-content h1 {
+  font-size: 1.4rem;
+  margin: 0 0 20px;
+}
+
+.home-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.home-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  padding: 16px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-alt);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-card:hover {
+  border-color: var(--color-primary);
+}
+
+.home-card-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.home-card-count {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
 }
 
 /* Stats page */

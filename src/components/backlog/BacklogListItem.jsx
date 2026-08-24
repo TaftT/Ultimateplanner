@@ -2,11 +2,13 @@ import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { useCategoryById } from '../../hooks/useCategories.js'
 import { useEntityStore } from '../../store/useEntityStore.js'
 import { useAppStore } from '../../store/useAppStore.js'
+import { useAuthStore } from '../../store/useAuthStore.js'
 
 export function BacklogListItem({ item }) {
   const category = useCategoryById(item.categoryId)
   const items = useEntityStore((s) => s.items)
   const openModal = useAppStore((s) => s.openModal)
+  const signedIn = useAuthStore((s) => Boolean(s.user))
 
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
     id: item.id,
@@ -50,6 +52,7 @@ export function BacklogListItem({ item }) {
       )}
       {!item.isUnscheduled && <span className="badge" title="Already on the calendar">Scheduled</span>}
       {item.recurrence && <span className="badge" title="Recurring">⟳</span>}
+      {signedIn && item.syncEnabled && <span className="badge" title="Synced to cloud">☁</span>}
       {item.durationMinutes != null ? (
         <span className="backlog-item-duration">{item.durationMinutes}m</span>
       ) : (

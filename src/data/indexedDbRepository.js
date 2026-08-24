@@ -81,6 +81,7 @@ export async function saveItem(item) {
     isHabit: false,
     archived: false,
     order: Date.now(),
+    syncEnabled: true,
     createdAt: nowIso(),
     ...existing,
     ...item,
@@ -260,6 +261,7 @@ export async function saveInstance(instance) {
     createdAt: nowIso(),
     ...existing,
     ...instance,
+    updatedAt: nowIso(),
   }
   await db.put('instances', toInstanceRecord(merged))
   return merged
@@ -289,6 +291,12 @@ export async function getJournalForDate(date) {
   const db = await getDb()
   const journal = await db.get('journals', date)
   return journal ?? null
+}
+
+/** @returns {Promise<import('./types.js').DayJournal[]>} */
+export async function getAllJournals() {
+  const db = await getDb()
+  return db.getAll('journals')
 }
 
 /**

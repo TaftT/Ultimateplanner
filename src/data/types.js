@@ -24,6 +24,7 @@
  * @property {boolean} isHabit - recurring items only; tracked on the Stats page
  * @property {boolean} archived
  * @property {number} order - manual backlog sort position, lower sorts first
+ * @property {boolean} syncEnabled - whether this item (and its instances) sync to the encrypted cloud store
  * @property {string} createdAt
  * @property {string} updatedAt
  */
@@ -43,6 +44,7 @@
  * @property {boolean} finalized
  * @property {number|null} finalPercent
  * @property {string} createdAt
+ * @property {string} updatedAt
  */
 
 /**

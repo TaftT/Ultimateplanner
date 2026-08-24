@@ -1,5 +1,5 @@
 // Public storage abstraction. UI/store code must import only from here.
-// Today this re-exports the IndexedDB implementation; a future
-// firestoreRepository.js implementing the same function signatures can be
-// swapped in here with no changes required elsewhere in the app.
-export * from './indexedDbRepository.js'
+// syncedRepository.js wraps the IndexedDB implementation with Firebase
+// cloud-sync side effects (see src/sync/syncEngine.js) while keeping the same
+// function signatures and local-first behavior.
+export * from './syncedRepository.js'

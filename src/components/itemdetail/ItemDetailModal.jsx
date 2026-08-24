@@ -12,12 +12,14 @@ import { useItem } from '../../hooks/useItem.js'
 import { useInstance } from '../../hooks/useInstance.js'
 import { useEntityStore } from '../../store/useEntityStore.js'
 import { useAppStore } from '../../store/useAppStore.js'
+import { useAuthStore } from '../../store/useAuthStore.js'
 import { todayStr } from '../../utils/dateUtils.js'
 
 export function ItemDetailModal({ itemId, instanceId, date, time }) {
   const existingItem = useItem(itemId)
   const instance = useInstance(instanceId)
   const closeModal = useAppStore((s) => s.closeModal)
+  const signedIn = useAuthStore((s) => Boolean(s.user))
   const createItem = useEntityStore((s) => s.createItem)
   const updateItem = useEntityStore((s) => s.updateItem)
   const deleteItem = useEntityStore((s) => s.deleteItem)
@@ -50,6 +52,7 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
   const [startTime, setStartTime] = useState(instance?.time ?? time ?? '09:00')
   const [recurrence, setRecurrence] = useState(existingItem?.recurrence ?? null)
   const [isHabit, setIsHabit] = useState(existingItem?.isHabit ?? false)
+  const [syncEnabled, setSyncEnabled] = useState(existingItem?.syncEnabled ?? true)
   const [error, setError] = useState('')
 
   const handleSave = async () => {
@@ -82,6 +85,7 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
         ? { ...recurrence, startDate: recurrence.startDate ?? scheduledDate, time: recurrenceTime }
         : null,
       isHabit: recurrence ? isHabit : false,
+      syncEnabled,
     }
 
     try {
@@ -200,6 +204,17 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
           <label className="reminder-toggle">
             <input type="checkbox" checked={isHabit} onChange={(e) => setIsHabit(e.target.checked)} />
             Track as habit (see stats on the Stats page)
+          </label>
+        )}
+
+        {signedIn && (
+          <label className="reminder-toggle">
+            <input
+              type="checkbox"
+              checked={syncEnabled}
+              onChange={(e) => setSyncEnabled(e.target.checked)}
+            />
+            Sync to cloud
           </label>
         )}
 

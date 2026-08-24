@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { DndContext } from '@dnd-kit/core'
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { TopBar } from '../layout/TopBar.jsx'
@@ -13,9 +13,19 @@ import { usePlannerSensors } from '../../utils/dnd/dndContextConfig.js'
 import { applyDeltaToTime } from '../../utils/dnd/timeFromPointer.js'
 import { todayStr, addDaysStr, timeStrToMinutes } from '../../utils/dateUtils.js'
 
+// Minimum horizontal travel (px) to count as a swipe, not a tap/scroll.
+const SWIPE_THRESHOLD_PX = 60
+// Swipe must be mostly horizontal — this many times more horizontal than
+// vertical travel — so a vertical scroll flick never gets mistaken for one.
+const SWIPE_DIRECTION_RATIO = 1.5
+// Swipes slower than this (ms) read as a drag, not a flick, and are ignored.
+const SWIPE_MAX_DURATION_MS = 800
+
 export function DayView() {
   const { date: dateParam } = useParams()
   const date = dateParam || todayStr()
+  const navigate = useNavigate()
+  const touchStartRef = useRef(null)
   const instances = useInstancesForDate(date)
   const previousDate = addDaysStr(date, -1)
   const previousInstances = useInstancesForDate(previousDate)
@@ -52,8 +62,35 @@ export function DayView() {
     }
   }
 
+  // Swipe left/right anywhere on the day view to move to the next/previous
+  // day, mirroring the prev/next buttons in DayNavControls. Passive
+  // start/end tracking only — never calls preventDefault, so normal
+  // vertical scrolling of the grid is untouched.
+  const handleTouchStart = (event) => {
+    const touch = event.touches[0]
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() }
+  }
+
+  const handleTouchEnd = (event) => {
+    const start = touchStartRef.current
+    touchStartRef.current = null
+    if (!start) return
+    const touch = event.changedTouches[0]
+    const dx = touch.clientX - start.x
+    const dy = touch.clientY - start.y
+    const elapsed = Date.now() - start.time
+    if (
+      elapsed > SWIPE_MAX_DURATION_MS ||
+      Math.abs(dx) < SWIPE_THRESHOLD_PX ||
+      Math.abs(dx) < Math.abs(dy) * SWIPE_DIRECTION_RATIO
+    ) {
+      return
+    }
+    navigate(`/day/${addDaysStr(date, dx < 0 ? 1 : -1)}`)
+  }
+
   return (
-    <div className="day-view">
+    <div className="day-view" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <TopBar date={date} />
       <DndContext sensors={sensors} modifiers={[restrictToVerticalAxis]} onDragEnd={handleDragEnd}>
         <AllDayRow instances={instances} date={date} />

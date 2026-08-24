@@ -5,7 +5,7 @@ export const useAppStore = create((set) => ({
   currentDate: todayStr(),
   setCurrentDate: (date) => set({ currentDate: date }),
 
-  activeModal: null, // { type: 'itemDetail'|'categoryManager'|'search', props }
+  activeModal: null, // { type: 'itemDetail'|'categoryManager'|'search'|'datePicker'|'auth'|'unlock', props }
   openModal: (type, props = {}) => set({ activeModal: { type, props } }),
   closeModal: () => set({ activeModal: null }),
 

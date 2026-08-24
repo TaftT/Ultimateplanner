@@ -3,6 +3,7 @@ import { useItem } from '../../hooks/useItem.js'
 import { useCategoryById } from '../../hooks/useCategories.js'
 import { useEntityStore } from '../../store/useEntityStore.js'
 import { useAppStore } from '../../store/useAppStore.js'
+import { useAuthStore } from '../../store/useAuthStore.js'
 import { getDisplayStatus } from '../../data/rollover.js'
 import { formatTimeLabel, timeStrToMinutes } from '../../utils/dateUtils.js'
 import { minutesToPx, MIN_BLOCK_HEIGHT_PX, DAY_HEIGHT } from './gridConstants.js'
@@ -23,6 +24,7 @@ export function InstanceBlock({ instance, date }) {
   const category = useCategoryById(item?.categoryId)
   const markInstanceComplete = useEntityStore((s) => s.markInstanceComplete)
   const openModal = useAppStore((s) => s.openModal)
+  const signedIn = useAuthStore((s) => Boolean(s.user))
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: instance.id,
@@ -71,6 +73,9 @@ export function InstanceBlock({ instance, date }) {
             {STATUS_LABEL[status] || '○'}
           </button>
           <span className="instance-line-title">{item.title}</span>
+          {signedIn && item.syncEnabled && (
+            <span className="instance-sync-badge" title="Synced to cloud">☁</span>
+          )}
           <span className="instance-line-time">{formatTimeLabel(instance.time)}</span>
         </div>
         <div className="instance-line-bar" style={{ borderColor: color }} />
@@ -121,7 +126,12 @@ export function InstanceBlock({ instance, date }) {
       >
         {STATUS_LABEL[status] || '○'}
       </button>
-      <div className="instance-block-title">{item.title}</div>
+      <div className="instance-block-title">
+        {item.title}
+        {signedIn && item.syncEnabled && (
+          <span className="instance-sync-badge" title="Synced to cloud">☁</span>
+        )}
+      </div>
       {height > 32 && <div className="instance-block-time">{formatTimeLabel(instance.time)}</div>}
     </div>
   )

@@ -1,17 +1,11 @@
-import { useEffect } from 'react'
 import { useAppStore } from '../../store/useAppStore.js'
 import { useEntityStore } from '../../store/useEntityStore.js'
 
-const AUTO_DISMISS_MS = 10000
-
+// Reminders are easy to miss if they auto-dismiss — they stay on screen
+// until the user explicitly dismisses one or marks its task complete.
 function Toast({ toast }) {
   const removeToast = useAppStore((s) => s.removeToast)
   const markInstanceComplete = useEntityStore((s) => s.markInstanceComplete)
-
-  useEffect(() => {
-    const timer = setTimeout(() => removeToast(toast.id), AUTO_DISMISS_MS)
-    return () => clearTimeout(timer)
-  }, [toast.id, removeToast])
 
   return (
     <div className={`toast toast-${toast.kind}`}>
