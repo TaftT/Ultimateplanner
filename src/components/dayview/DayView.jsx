@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { DndContext } from '@dnd-kit/core'
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers'
@@ -11,6 +11,7 @@ import { useEntityStore } from '../../store/useEntityStore.js'
 import { useAppStore } from '../../store/useAppStore.js'
 import { usePlannerSensors } from '../../utils/dnd/dndContextConfig.js'
 import { applyDeltaToTime } from '../../utils/dnd/timeFromPointer.js'
+import { minutesToPx } from './gridConstants.js'
 import { todayStr, addDaysStr, timeStrToMinutes } from '../../utils/dateUtils.js'
 
 // Minimum horizontal travel (px) to count as a swipe, not a tap/scroll.
@@ -26,6 +27,12 @@ export function DayView() {
   const date = dateParam || todayStr()
   const navigate = useNavigate()
   const touchStartRef = useRef(null)
+  const scrollRef = useRef(null)
+  const mountedDateRef = useRef(date)
+  // null on first render (no slide-in on initial load), then 'forward'/
+  // 'backward' once the date actually changes, so paging through days
+  // animates in the direction you're moving.
+  const [slideDirection, setSlideDirection] = useState(null)
   const instances = useInstancesForDate(date)
   const previousDate = addDaysStr(date, -1)
   const previousInstances = useInstancesForDate(previousDate)
@@ -50,6 +57,24 @@ export function DayView() {
   useEffect(() => {
     setCurrentDate(date)
   }, [date, setCurrentDate])
+
+  useEffect(() => {
+    if (mountedDateRef.current !== date) {
+      setSlideDirection(mountedDateRef.current < date ? 'forward' : 'backward')
+      mountedDateRef.current = date
+    }
+  }, [date])
+
+  // Centers the grid on noon the first time this view mounts — e.g. arriving
+  // from Home/Backlog — rather than starting at the very top of the day.
+  // Deliberately mount-only: re-centering on every day-to-day navigation
+  // would undo whatever time range the user had scrolled to.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) {
+      el.scrollTop = minutesToPx(12 * 60) - el.clientHeight / 2
+    }
+  }, [])
 
   const handleDragEnd = (event) => {
     const { active, delta } = event
@@ -93,9 +118,13 @@ export function DayView() {
     <div className="day-view" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <TopBar date={date} />
       <DndContext sensors={sensors} modifiers={[restrictToVerticalAxis]} onDragEnd={handleDragEnd}>
-        <AllDayRow instances={instances} date={date} />
-        <div className="day-scroll-area">
-          <DayGrid instances={instances} date={date} continuations={continuations} />
+        <div key={`allday-${date}`} className={slideDirection ? `day-slide-${slideDirection}` : undefined}>
+          <AllDayRow instances={instances} date={date} />
+        </div>
+        <div className="day-scroll-area" ref={scrollRef}>
+          <div key={`grid-${date}`} className={slideDirection ? `day-slide-${slideDirection}` : undefined}>
+            <DayGrid instances={instances} date={date} continuations={continuations} />
+          </div>
         </div>
       </DndContext>
       {journalOpen && <JournalPanel date={date} />}

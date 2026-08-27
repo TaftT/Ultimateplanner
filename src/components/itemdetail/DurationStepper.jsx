@@ -1,4 +1,6 @@
-export function DurationStepper({ durationMinutes, onChange }) {
+import { timeStrToMinutes, minutesToTimeStr, formatTimeLabel } from '../../utils/dateUtils.js'
+
+export function DurationStepper({ durationMinutes, onChange, startTime }) {
   const isReminder = durationMinutes === null
 
   // Stepping below 10 minutes drops into "no duration" (a reminder) instead
@@ -8,6 +10,11 @@ export function DurationStepper({ durationMinutes, onChange }) {
     onChange(durationMinutes <= 10 ? null : durationMinutes - 10)
   }
   const increment = () => onChange(isReminder ? 10 : durationMinutes + 10)
+
+  const endTimeLabel =
+    startTime && !isReminder
+      ? formatTimeLabel(minutesToTimeStr(timeStrToMinutes(startTime) + durationMinutes))
+      : null
 
   return (
     <div className="duration-stepper">
@@ -33,6 +40,7 @@ export function DurationStepper({ durationMinutes, onChange }) {
           +
         </button>
       </div>
+      {endTimeLabel && <span className="stepper-end-time">ends {endTimeLabel}</span>}
     </div>
   )
 }

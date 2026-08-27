@@ -29,7 +29,8 @@ function HabitHistoryStrip({ history }) {
 function HabitCard({ item }) {
   const category = useCategoryById(item.categoryId)
   const allInstances = useEntityStore((s) => s.allInstances)
-  const stats = computeHabitStats(item.id, allInstances)
+  const items = useEntityStore((s) => s.items)
+  const stats = computeHabitStats(item, items, allInstances)
 
   return (
     <div className="habit-card">

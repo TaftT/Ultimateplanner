@@ -15,8 +15,11 @@ import { seedIfEmpty } from '../../data/devSeed.js'
 export function AppShell({ children }) {
   const init = useEntityStore((s) => s.init)
   const initialized = useEntityStore((s) => s.initialized)
+  const items = useEntityStore((s) => s.items)
   const activeModal = useAppStore((s) => s.activeModal)
   const initAuth = useAuthStore((s) => s.init)
+  const signedIn = useAuthStore((s) => Boolean(s.user))
+  const needsUnlock = useAuthStore((s) => s.needsUnlock)
 
   useEffect(() => {
     async function bootstrap() {
@@ -31,10 +34,20 @@ export function AppShell({ children }) {
     return <div className="app-loading">Loading…</div>
   }
 
+  // A single gate for every path that can open an existing item's detail
+  // (backlog rows, day-grid blocks, search results, parent/child chips, …):
+  // if it's a synced item and cloud sync is locked, redirect to the unlock
+  // prompt instead of the edit form, rather than teaching every one of those
+  // call sites about lock state individually.
+  const openingItemId = activeModal?.type === 'itemDetail' ? activeModal.props.itemId : null
+  const openingItem = openingItemId ? items.find((i) => i.id === openingItemId) : null
+  const isOpeningLockedItem = signedIn && needsUnlock && Boolean(openingItem?.syncEnabled)
+
   return (
     <div className="app-shell">
       {children}
-      {activeModal?.type === 'itemDetail' && (
+      {activeModal?.type === 'itemDetail' && isOpeningLockedItem && <UnlockPrompt />}
+      {activeModal?.type === 'itemDetail' && !isOpeningLockedItem && (
         <ItemDetailModal key={activeModal.props.itemId ?? 'new'} {...activeModal.props} />
       )}
       {activeModal?.type === 'categoryManager' && <CategoryManagerModal />}

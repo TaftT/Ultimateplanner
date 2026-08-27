@@ -9,6 +9,10 @@ export const DAY_HEIGHT = DAY_MINUTES * PX_PER_MIN
 // height so short items stay legible, same as Google Calendar does.
 export const MIN_BLOCK_HEIGHT_PX = 26
 
+// Overlapping instance blocks cascade rightward by this many px per step
+// (later-starting block on top), rather than splitting into equal columns.
+export const OVERLAP_STAGGER_PX = 26
+
 export function minutesToPx(minutes) {
   return minutes * PX_PER_MIN
 }

@@ -85,7 +85,15 @@ export function AuthModal() {
         Cancel
       </Button>
       <Button variant="primary" onClick={handleSubmit} disabled={busy}>
-        {mode === 'signUp' ? 'Sign up' : mode === 'forgot' ? 'Send reset email' : 'Sign in'}
+        {busy ? (
+          <span className="btn-spinner" aria-label="Working…" />
+        ) : mode === 'signUp' ? (
+          'Sign up'
+        ) : mode === 'forgot' ? (
+          'Send reset email'
+        ) : (
+          'Sign in'
+        )}
       </Button>
     </>
   )

@@ -16,7 +16,7 @@ export async function saveItem(itemPartial) {
 
 export async function deleteItem(id) {
   await raw.deleteItem(id)
-  syncEngine.removeItem(id).catch(() => {})
+  syncEngine.deleteItemRemote(id).catch(() => {})
 }
 
 export async function saveInstance(instancePartial) {
@@ -28,7 +28,7 @@ export async function saveInstance(instancePartial) {
 
 export async function deleteInstance(id) {
   await raw.deleteInstance(id)
-  syncEngine.removeInstance(id).catch(() => {})
+  syncEngine.deleteInstanceRemote(id).catch(() => {})
 }
 
 export async function saveCategory(categoryPartial) {

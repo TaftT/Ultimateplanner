@@ -25,6 +25,8 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
   const deleteItem = useEntityStore((s) => s.deleteItem)
   const scheduleItemOnDate = useEntityStore((s) => s.scheduleItemOnDate)
   const unscheduleInstance = useEntityStore((s) => s.unscheduleInstance)
+  const deleteInstanceOnly = useEntityStore((s) => s.deleteInstanceOnly)
+  const deleteFutureSeries = useEntityStore((s) => s.deleteFutureSeries)
   const moveInstanceTime = useEntityStore((s) => s.moveInstanceTime)
   const moveInstanceDate = useEntityStore((s) => s.moveInstanceDate)
   const setInstancePercentComplete = useEntityStore((s) => s.setInstancePercentComplete)
@@ -128,17 +130,44 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
     closeModal()
   }
 
+  const handleDeleteThisInstance = async () => {
+    await deleteInstanceOnly(instanceId)
+    closeModal()
+  }
+
+  const handleDeleteSeries = async () => {
+    await deleteFutureSeries(itemId)
+    closeModal()
+  }
+
   const handleUnschedule = async () => {
     await unscheduleInstance(instanceId)
     closeModal()
   }
 
+  // Deleting one occurrence of a recurring series is ambiguous — "delete"
+  // could mean just this day or the whole series — so a recurring item
+  // being edited from a specific instance gets both options spelled out
+  // instead of a single Delete button.
+  const isRecurringInstance = !isCreate && instanceId && existingItem?.recurrence
+
   const footer = (
     <>
-      {!isCreate && (
-        <Button variant="danger" onClick={handleDelete}>
-          Delete
-        </Button>
+      {isRecurringInstance ? (
+        <>
+          <Button variant="danger" onClick={handleDeleteThisInstance}>
+            Delete this event
+          </Button>
+          <Button variant="danger" onClick={handleDeleteSeries} title="Keeps past occurrences, removes today's and every future one">
+            Delete series
+          </Button>
+        </>
+      ) : (
+        !isCreate && (
+          <Button variant="danger" onClick={handleDelete}>
+            Delete
+          </Button>
+        )
       )}
       {!isCreate && instanceId && !existingItem?.recurrence && (
         <Button variant="subtle" onClick={handleUnschedule}>
@@ -188,7 +217,13 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
           All day
         </label>
 
-        {!isAllDay && <DurationStepper durationMinutes={durationMinutes} onChange={setDurationMinutes} />}
+        {!isAllDay && (
+          <DurationStepper
+            durationMinutes={durationMinutes}
+            onChange={setDurationMinutes}
+            startTime={date ? startTime : null}
+          />
+        )}
 
         <CategoryPicker categoryId={categoryId} onChange={setCategoryId} />
 

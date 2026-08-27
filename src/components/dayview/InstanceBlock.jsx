@@ -6,7 +6,7 @@ import { useAppStore } from '../../store/useAppStore.js'
 import { useAuthStore } from '../../store/useAuthStore.js'
 import { getDisplayStatus } from '../../data/rollover.js'
 import { formatTimeLabel, timeStrToMinutes } from '../../utils/dateUtils.js'
-import { minutesToPx, MIN_BLOCK_HEIGHT_PX, DAY_HEIGHT } from './gridConstants.js'
+import { minutesToPx, MIN_BLOCK_HEIGHT_PX, DAY_HEIGHT, OVERLAP_STAGGER_PX } from './gridConstants.js'
 import { contrastTextColor } from '../../utils/colorUtils.js'
 
 const STATUS_LABEL = {
@@ -18,20 +18,43 @@ const STATUS_LABEL = {
 }
 
 const REMINDER_LABEL_HEIGHT = 18
+// Caps how far a block can cascade rightward when many instances overlap,
+// so a busy cluster doesn't shrink blocks down to nothing on a narrow screen.
+const MAX_OVERLAP_STAGGER = 6
 
-export function InstanceBlock({ instance, date }) {
+export function InstanceBlock({ instance, date, overlapIndex = 0 }) {
   const item = useItem(instance.itemId)
   const category = useCategoryById(item?.categoryId)
   const markInstanceComplete = useEntityStore((s) => s.markInstanceComplete)
   const openModal = useAppStore((s) => s.openModal)
   const signedIn = useAuthStore((s) => Boolean(s.user))
+  const needsUnlock = useAuthStore((s) => s.needsUnlock)
+  const isLocked = signedIn && needsUnlock && Boolean(item?.syncEnabled)
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: instance.id,
     data: { instance },
+    disabled: isLocked,
   })
 
   if (!item) return null
+
+  const cappedStagger = Math.min(overlapIndex, MAX_OVERLAP_STAGGER)
+  const staggerStyle = cappedStagger > 0 ? { left: 6 + cappedStagger * OVERLAP_STAGGER_PX } : null
+
+  if (isLocked) {
+    const linePx = minutesToPx(timeStrToMinutes(instance.time))
+    return (
+      <div
+        ref={setNodeRef}
+        className="instance-block instance-locked"
+        style={{ top: linePx, height: MIN_BLOCK_HEIGHT_PX, ...staggerStyle, zIndex: 1 + cappedStagger }}
+        onClick={() => openModal('itemDetail', { itemId: item.id, instanceId: instance.id, date, time: instance.time })}
+      >
+        <div className="instance-block-title">🔒 Locked</div>
+      </div>
+    )
+  }
 
   const status = getDisplayStatus(instance)
   // durationMinutes is null when the item is a reminder with no duration —
@@ -105,14 +128,15 @@ export function InstanceBlock({ instance, date }) {
     borderColor: color,
     color: isSleep ? 'var(--color-text)' : status === 'ghost' ? 'var(--color-text-muted)' : textColor,
     transform: dragTransform,
-    zIndex: isDragging ? 20 : 1,
+    zIndex: isDragging ? 20 : 1 + cappedStagger,
     opacity: status === 'worked_on' || status === 'in_progress' ? 0.85 : 1,
+    ...staggerStyle,
   }
 
   return (
     <div
       ref={setNodeRef}
-      className={`instance-block status-${status}`}
+      className={`instance-block status-${status}${cappedStagger > 0 ? ' instance-block-staggered' : ''}`}
       style={style}
       {...listeners}
       {...attributes}

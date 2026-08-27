@@ -37,11 +37,11 @@ export function UnlockPrompt() {
 
   const footer = (
     <>
-      <Button variant="subtle" onClick={handleSignOut}>
+      <Button variant="subtle" onClick={handleSignOut} disabled={busy}>
         Sign out instead
       </Button>
       <Button variant="primary" onClick={handleUnlock} disabled={busy}>
-        Unlock
+        {busy ? <span className="btn-spinner" aria-label="Unlocking…" /> : 'Unlock'}
       </Button>
     </>
   )

@@ -13,6 +13,10 @@ export function TopBar({ date }) {
   const authReady = useAuthStore((s) => s.ready)
   const user = useAuthStore((s) => s.user)
   const needsUnlock = useAuthStore((s) => s.needsUnlock)
+  const syncing = useAuthStore((s) => s.syncing)
+  const ownerMismatch = useAuthStore((s) => s.ownerMismatch)
+  const forceSyncThisDevice = useAuthStore((s) => s.forceSyncThisDevice)
+  const resync = useAuthStore((s) => s.resync)
   const signOut = useAuthStore((s) => s.signOut)
   const dayLinkDate = date ?? currentDate
   // Loading the journal here (not just when the panel is open) lets the
@@ -67,9 +71,31 @@ export function TopBar({ date }) {
                 🔒 Unlock sync
               </button>
             )}
-            {user && !needsUnlock && (
+            {user && !needsUnlock && ownerMismatch && (
+              <span className="account-mismatch" title="This device's local data was last synced under a different account">
+                <span aria-hidden="true">⚠️</span> Different account's data on this device
+                <button className="btn btn-subtle account-mismatch-btn" onClick={forceSyncThisDevice}>
+                  Sync anyway
+                </button>
+                <button className="icon-button" onClick={signOut} aria-label="Sign out">
+                  Sign out
+                </button>
+              </span>
+            )}
+            {user && !needsUnlock && !ownerMismatch && (
               <>
-                <span className="account-email" title={user.email}>☁ {user.email}</span>
+                <span className="account-email" title={syncing ? 'Syncing…' : user.email}>
+                  {syncing ? <span className="btn-spinner" aria-label="Syncing" /> : '☁'} {user.email}
+                </span>
+                <button
+                  className="icon-button"
+                  onClick={resync}
+                  disabled={syncing}
+                  aria-label="Resync now"
+                  title="Force a full resync — use this if a change on another device hasn't shown up here"
+                >
+                  ⟳
+                </button>
                 <button className="icon-button" onClick={signOut} aria-label="Sign out">
                   Sign out
                 </button>

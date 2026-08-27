@@ -136,6 +136,25 @@ export const useEntityStore = create((set, get) => ({
     await get().refreshAllInstances()
   },
 
+  // "Delete series" for a recurring item — stops the series going forward
+  // without touching history. Removes today's and every future instance and
+  // clears the recurrence rule (so nothing more gets generated), but leaves
+  // past instances and the item record itself alone, since past instances
+  // still need the item to resolve their title/category when rendered.
+  deleteFutureSeries: async (itemId) => {
+    const today = todayStr()
+    const instances = await repo.getInstancesForItem(itemId)
+    for (const inst of instances) {
+      if (inst.date >= today) {
+        await repo.deleteInstance(inst.id)
+      }
+    }
+    await repo.saveItem({ id: itemId, recurrence: null, isHabit: false })
+    await get().refreshItems()
+    await get().reloadLoadedDates()
+    await get().refreshAllInstances()
+  },
+
   adjustDuration: async (itemId, deltaMinutes) => {
     const item = get().items.find((i) => i.id === itemId) ?? (await repo.getItem(itemId))
     const current = item.durationMinutes ?? 0
@@ -277,6 +296,17 @@ export const useEntityStore = create((set, get) => ({
     await get().loadInstancesForDate(inst.date)
   },
 
+  // Removes just this one occurrence of a recurring series — the item and
+  // its other instances are untouched. Distinct from unscheduleInstance,
+  // which is for a non-recurring item and puts it back in the backlog;
+  // a recurring series has no single "the item" state to return to.
+  deleteInstanceOnly: async (instanceId) => {
+    const inst = await repo.getInstance(instanceId)
+    await repo.deleteInstance(instanceId)
+    await get().loadInstancesForDate(inst.date)
+    await get().refreshAllInstances()
+  },
+
   reloadLoadedDates: async () => {
     const dates = Object.keys(get().instancesByDate)
     await Promise.all(dates.map((d) => get().loadInstancesForDate(d)))
@@ -312,17 +342,23 @@ export const useEntityStore = create((set, get) => ({
    * order, then renumbers everyone sequentially. Renumbering the whole list
    * (rather than fractional-indexing between neighbors) is simplest and
    * plenty cheap for a personal list of this size.
+   *
+   * If draggedId has subtasks, they move with it as a contiguous block
+   * (in their existing relative order) so reordering a parent can't strand
+   * its children elsewhere in the list.
    */
   reorderItem: async (draggedId, targetId, position) => {
     if (draggedId === targetId) return
     const ordered = get().items.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     const dragged = ordered.find((i) => i.id === draggedId)
     if (!dragged) return
-    const rest = ordered.filter((i) => i.id !== draggedId)
+    const childIds = new Set(dragged.childIds)
+    const draggedGroup = [dragged, ...ordered.filter((i) => childIds.has(i.id))]
+    const rest = ordered.filter((i) => i.id !== draggedId && !childIds.has(i.id))
     const targetIndex = rest.findIndex((i) => i.id === targetId)
     if (targetIndex === -1) return
     const insertIndex = position === 'after' ? targetIndex + 1 : targetIndex
-    rest.splice(insertIndex, 0, dragged)
+    rest.splice(insertIndex, 0, ...draggedGroup)
 
     for (let i = 0; i < rest.length; i++) {
       if (rest[i].order !== i) {

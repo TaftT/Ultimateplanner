@@ -10,6 +10,10 @@ import { useEntityStore } from '../../store/useEntityStore.js'
 import { useAppStore } from '../../store/useAppStore.js'
 import { usePlannerSensors } from '../../utils/dnd/dndContextConfig.js'
 
+// Minimum rightward drag (px) onto another row to read as "make this a
+// subtask" rather than a reorder. Deliberately larger than a stray wobble.
+const NEST_HORIZONTAL_PX = 40
+
 export function BacklogPage() {
   const scheduleItemOnDate = useEntityStore((s) => s.scheduleItemOnDate)
   const reorderItem = useEntityStore((s) => s.reorderItem)
@@ -38,26 +42,21 @@ export function BacklogPage() {
       return
     }
 
-    // Dropped on another backlog row: dropping near the top/bottom of that
-    // row reorders the list, dropping in a small central band nests it as a
-    // child of that row (the target becomes the parent). The nest band is
-    // kept narrow (middle 20%) so reordering — the far more common drag —
-    // stays easy to land with a real mouse/touch pointer. Uses the actual
-    // pointer position (start position + total movement), not the dragged
-    // element's rect — the element can be grabbed anywhere within its row,
-    // so its rect has an arbitrary offset from the pointer that isn't useful
-    // for this.
+    // Dropped on another backlog row. Reordering (dropping above/below the
+    // target) is the overwhelmingly common gesture, so it's the default for
+    // any drop that isn't clearly deliberate sideways motion — nesting as a
+    // subtask only triggers when the drag moved right by a real amount.
+    // Vertical-band-based disambiguation (nest if you drop near the middle
+    // of the row) turned out to be unreliable in practice: ordinary human
+    // drop precision on a ~44px row tends to land near the middle anyway,
+    // so it kept nesting when a reorder was intended. A horizontal gesture
+    // can't be hit by accident the way a vertical position can.
     const targetItemId = over.data.current?.itemId
     if (targetItemId && targetItemId !== active.id) {
       const activeItem = active.data.current?.item
-      const overRect = over.rect
-      const startY = activatorEvent?.touches?.[0]?.clientY ?? activatorEvent?.clientY
-      const pointerY = startY != null ? startY + delta.y : null
-      const ratio = pointerY != null && overRect && overRect.height > 0
-        ? (pointerY - overRect.top) / overRect.height
-        : null
+      const isNestGesture = delta.x > NEST_HORIZONTAL_PX
 
-      if (ratio != null && ratio > 0.4 && ratio < 0.6) {
+      if (isNestGesture) {
         await linkParentChild(targetItemId, active.id)
       } else {
         // Reordering a child pulls it out of its current parent — in this
@@ -67,7 +66,18 @@ export function BacklogPage() {
         if (activeItem?.parentIds?.length > 0) {
           await Promise.all(activeItem.parentIds.map((parentId) => unlinkParentChild(parentId, active.id)))
         }
-        await reorderItem(active.id, targetItemId, ratio != null && ratio <= 0.4 ? 'before' : 'after')
+
+        // Uses the actual pointer position (start position + total
+        // movement), not the dragged element's rect — the element can be
+        // grabbed anywhere within its row, so its rect has an arbitrary
+        // offset from the pointer that isn't useful for a before/after split.
+        const overRect = over.rect
+        const startY = activatorEvent?.touches?.[0]?.clientY ?? activatorEvent?.clientY
+        const pointerY = startY != null ? startY + delta.y : null
+        const ratio = pointerY != null && overRect && overRect.height > 0
+          ? (pointerY - overRect.top) / overRect.height
+          : null
+        await reorderItem(active.id, targetItemId, ratio != null && ratio <= 0.5 ? 'before' : 'after')
       }
     }
   }
@@ -90,7 +100,7 @@ export function BacklogPage() {
       >
         <div className="backlog-page-content">
           <BacklogList />
-          <MiniCalendarDropTarget />
+          <MiniCalendarDropTarget isDragging={Boolean(activeTitle)} />
         </div>
         <DragOverlay>{activeTitle && <div className="drag-overlay-chip">{activeTitle}</div>}</DragOverlay>
       </DndContext>
