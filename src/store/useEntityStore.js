@@ -88,13 +88,14 @@ export const useEntityStore = create((set, get) => ({
     const saved = await repo.saveItem({ id: itemId, ...patch })
 
     // Regenerating deletes and recreates every future instance (fresh ids,
-    // percent reset to 0), which would blow away an in-flight edit to one
-    // specific occurrence (its date/time/percent, changed right after this
-    // call in the item modal). Only do that when it's actually needed: the
-    // recurrence rule changed, or duration/all-day changed (which future
-    // instances need to pick up from the template). A save that leaves the
-    // rule and duration untouched — e.g. just editing notes or completing
-    // today's occurrence — must not disturb any existing instance.
+    // percent reset to 0, time reset to the series' regular time) — only
+    // actually needed when the recurrence RULE changed, since that's what
+    // determines which dates get an instance at all. A duration/all-day-only
+    // change doesn't affect which dates recur, so it's patched onto each
+    // existing instance in place instead: regenerating for a duration change
+    // used to blow away an in-flight edit to one specific occurrence (e.g.
+    // moving its time, changed right before this call in the item modal),
+    // snapping it back to the template's default time.
     // Compare actual values, not key presence — the item modal always sends
     // the full form (title, durationMinutes, isAllDay, recurrence, ...) on
     // every save, so `'durationMinutes' in patch` is always true whether or
@@ -104,7 +105,7 @@ export const useEntityStore = create((set, get) => ({
     const durationOrAllDayChanged =
       before && (before.durationMinutes !== saved.durationMinutes || before.isAllDay !== saved.isAllDay)
 
-    if (saved.recurrence && (recurrenceChanged || durationOrAllDayChanged)) {
+    if (saved.recurrence && recurrenceChanged) {
       await regenerateFutureInstances(saved, todayStr())
     } else if (before?.recurrence && recurrenceChanged && !saved.recurrence) {
       // recurrence was just turned off — clear the remaining future instances of the old series
@@ -112,7 +113,7 @@ export const useEntityStore = create((set, get) => ({
       for (const inst of instances.filter((i) => !i.finalized)) {
         await repo.deleteInstance(inst.id)
       }
-    } else if (!saved.recurrence && durationOrAllDayChanged) {
+    } else if (durationOrAllDayChanged) {
       const instances = await repo.getInstancesForItem(itemId)
       for (const inst of instances.filter((i) => !i.finalized)) {
         await repo.saveInstance({
@@ -216,6 +217,23 @@ export const useEntityStore = create((set, get) => ({
     await clearUnscheduledFlag(inst.itemId)
     await get().loadInstancesForDate(inst.date)
     await get().refreshItems()
+    return updated
+  },
+
+  // Changes just this one occurrence's duration/all-day, leaving the series'
+  // template and every other occurrence untouched — the counterpart to
+  // updateItem's duration handling, which is for "apply to every future
+  // occurrence" instead (see the item modal's "Save for all" option).
+  setInstanceDuration: async (instanceId, durationMinutes, isAllDay) => {
+    const inst = await repo.getInstance(instanceId)
+    const updated = await repo.saveInstance({
+      ...inst,
+      durationMinutes,
+      isAllDay,
+      time: isAllDay ? null : inst.time,
+    })
+    await get().loadInstancesForDate(inst.date)
+    await get().refreshAllInstances()
     return updated
   },
 

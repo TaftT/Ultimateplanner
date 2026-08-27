@@ -31,12 +31,16 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
   const moveInstanceDate = useEntityStore((s) => s.moveInstanceDate)
   const setInstancePercentComplete = useEntityStore((s) => s.setInstancePercentComplete)
   const setInstanceNotes = useEntityStore((s) => s.setInstanceNotes)
+  const setInstanceDuration = useEntityStore((s) => s.setInstanceDuration)
 
   const isCreate = !itemId
 
   const [title, setTitle] = useState(existingItem?.title ?? '')
+  // Duration lives on the template (existingItem) by default, but once an
+  // occurrence has its own override (see setInstanceDuration / "Save for
+  // all" below) the instance's own value takes precedence for that one day.
   const [durationMinutes, setDurationMinutes] = useState(
-    existingItem ? existingItem.durationMinutes : 30
+    instance ? instance.durationMinutes : (existingItem ? existingItem.durationMinutes : 30)
   )
   // Notes live on the instance once an item is scheduled — each occurrence
   // of a recurring series gets its own, same reasoning as percent complete.
@@ -49,7 +53,7 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
   const [percentComplete, setPercentComplete] = useState(
     instance ? instance.percentComplete : (existingItem?.percentComplete ?? 0)
   )
-  const [isAllDay, setIsAllDay] = useState(existingItem?.isAllDay ?? false)
+  const [isAllDay, setIsAllDay] = useState(instance ? instance.isAllDay : (existingItem?.isAllDay ?? false))
   const [scheduledDate, setScheduledDate] = useState(instance?.date ?? date ?? todayStr())
   const [startTime, setStartTime] = useState(instance?.time ?? time ?? '09:00')
   const [recurrence, setRecurrence] = useState(existingItem?.recurrence ?? null)
@@ -57,7 +61,18 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
   const [syncEnabled, setSyncEnabled] = useState(existingItem?.syncEnabled ?? true)
   const [error, setError] = useState('')
 
-  const handleSave = async () => {
+  // Deleting one occurrence of a recurring series is ambiguous — "delete"
+  // could mean just this day or the whole series — so a recurring item
+  // being edited from a specific instance gets both options spelled out
+  // instead of a single Delete button. The same ambiguity applies to
+  // duration/all-day: "Save" below only ever touches this one occurrence;
+  // "Save for all" is the explicit opt-in to change the series' template.
+  const isRecurringInstance = !isCreate && instanceId && existingItem?.recurrence
+
+  // `applyToSeries` only matters for a recurring-instance edit — everywhere
+  // else there's only ever one save button, and it always means "apply
+  // to the item," so the default (false) is a no-op there.
+  const handleSave = async (applyToSeries = false) => {
     if (!title.trim()) {
       setError('Title is required')
       return
@@ -66,6 +81,14 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
       setError('Pick a valid date')
       return
     }
+    // Duration/all-day live on the item as the series' template. Editing one
+    // occurrence defaults to changing just that occurrence (scopeToInstance)
+    // — the template payload sent to updateItem below keeps the template's
+    // existing values untouched, and setInstanceDuration patches the
+    // instance directly instead. "Save for all" (applyToSeries) skips that
+    // and lets the real edited values flow into the template payload as
+    // usual, which updateItem then applies to every future occurrence.
+    const scopeToInstance = isRecurringInstance && !applyToSeries
     // Notes are excluded here when editing a specific instance — they live
     // on the instance in that case (added back into the item payload only
     // for a plain, unscheduled item below).
@@ -80,9 +103,9 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
     const recurrenceTime = instanceId ? (recurrence?.time ?? null) : (isAllDay ? null : startTime)
     const payload = {
       title: title.trim(),
-      durationMinutes,
+      durationMinutes: scopeToInstance ? existingItem.durationMinutes : durationMinutes,
       categoryId,
-      isAllDay,
+      isAllDay: scopeToInstance ? existingItem.isAllDay : isAllDay,
       recurrence: recurrence
         ? { ...recurrence, startDate: recurrence.startDate ?? scheduledDate, time: recurrenceTime }
         : null,
@@ -115,6 +138,9 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
         if (notes !== instance?.notes) {
           await setInstanceNotes(instanceId, notes)
         }
+        if (scopeToInstance && (durationMinutes !== instance?.durationMinutes || isAllDay !== instance?.isAllDay)) {
+          await setInstanceDuration(instanceId, durationMinutes, isAllDay)
+        }
         await updateItem(itemId, payload)
       } else {
         await updateItem(itemId, { ...payload, percentComplete, notes })
@@ -145,12 +171,6 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
     closeModal()
   }
 
-  // Deleting one occurrence of a recurring series is ambiguous — "delete"
-  // could mean just this day or the whole series — so a recurring item
-  // being edited from a specific instance gets both options spelled out
-  // instead of a single Delete button.
-  const isRecurringInstance = !isCreate && instanceId && existingItem?.recurrence
-
   const footer = (
     <>
       {isRecurringInstance ? (
@@ -177,7 +197,16 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
       <Button variant="subtle" onClick={closeModal}>
         Cancel
       </Button>
-      <Button variant="primary" onClick={handleSave}>
+      {isRecurringInstance && (
+        <Button
+          variant="subtle"
+          onClick={() => handleSave(true)}
+          title="Applies duration/all-day changes to every future occurrence, not just this one"
+        >
+          Save for all
+        </Button>
+      )}
+      <Button variant="primary" onClick={() => handleSave(false)}>
         Save
       </Button>
     </>
@@ -208,7 +237,7 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
             {!isAllDay && <StartTimeEditor time={startTime} onChange={setStartTime} />}
           </div>
         )}
-        {date && instanceId && existingItem?.recurrence && (
+        {date && isRecurringInstance && (
           <div className="form-hint">Changing the date only moves this occurrence — the series keeps its regular schedule.</div>
         )}
 
@@ -223,6 +252,11 @@ export function ItemDetailModal({ itemId, instanceId, date, time }) {
             onChange={setDurationMinutes}
             startTime={date ? startTime : null}
           />
+        )}
+        {isRecurringInstance && (
+          <div className="form-hint">
+            Duration/all-day changes only apply to this occurrence — use "Save for all" below to change every future one.
+          </div>
         )}
 
         <CategoryPicker categoryId={categoryId} onChange={setCategoryId} />

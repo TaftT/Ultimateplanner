@@ -11,10 +11,16 @@ export function DurationStepper({ durationMinutes, onChange, startTime }) {
   }
   const increment = () => onChange(isReminder ? 10 : durationMinutes + 10)
 
-  const endTimeLabel =
-    startTime && !isReminder
-      ? formatTimeLabel(minutesToTimeStr(timeStrToMinutes(startTime) + durationMinutes))
-      : null
+  // minutesToTimeStr clamps to 23:59 rather than wrapping — fine for a plain
+  // start-time field, but an overnight duration (e.g. sleep) needs the end
+  // time to actually roll into the next day instead of freezing at 11:59 PM.
+  let endTimeLabel = null
+  if (startTime && !isReminder) {
+    const endMinutesTotal = timeStrToMinutes(startTime) + durationMinutes
+    const daysOffset = Math.floor(endMinutesTotal / 1440)
+    endTimeLabel = formatTimeLabel(minutesToTimeStr(endMinutesTotal % 1440))
+    if (daysOffset > 0) endTimeLabel += ` (+${daysOffset}d)`
+  }
 
   return (
     <div className="duration-stepper">
